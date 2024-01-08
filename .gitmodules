@@ -1,0 +1,3 @@
+[submodule "Docker/calc"]
+	path = Docker/calc
+	url = https://github.com/jardev/calc.git

@@ -1,0 +1,31 @@
+# Build stage
+FROM python:3.11-alpine as builder
+
+ARG POETRY_VERSION=1.6.1
+
+RUN apk update && \
+    apk add --no-cache curl gcc libressl-dev musl-dev libffi-dev && \
+    pip install --no-cache-dir poetry==${POETRY_VERSION}
+
+WORKDIR /build
+
+COPY calc/pyproject.toml calc/poetry.lock /build/
+RUN poetry install --no-dev
+
+# Run stage
+FROM python:3.11-alpine
+
+WORKDIR /opt
+
+# Copy only necessary files from the builder stage
+COPY --from=builder /usr/local /usr/local
+COPY calc/ /opt/
+
+# Set the PATH to include the virtual environment
+ENV PATH="/usr/local/bin:${PATH}"
+
+# Install Django explicitly
+RUN poetry add django
+
+# Run the Django development server using poetry run
+CMD ["poetry", "run", "python", "manage.py", "runserver", "0.0.0.0:8000"]
