@@ -1,85 +1,58 @@
-# Project CI/CD Configuration
+# Project Name
 
-This repository contains the GitLab CI/CD configuration to automate various stages of the development workflow.
+This project uses GitLab CI/CD for continuous integration and deployment.
 
-## Stages
+## CI/CD Stages
 
-- **Code Check:** Linting, TypeScript checks, and code formatting checks.
-- **Coverage:** Collecting code coverage metrics.
-- **Test:** Running unit tests.
-- **Package:** Packaging the application.
-- **E2E Test:** End-to-end testing.
-- **Deploy:** Deployment tasks.
-- **Notification:** Sending notifications.
+### Lint Dockerfile
+- Lints the Dockerfile in the specified folder.
 
-## Jobs
+### Lint Python
+- Lints the Python code using Flake8.
 
-### `check-lint`
+### Lint Ansible
+- Lints Ansible code using Ansible Lint and generates a JUnit report.
 
-- **Description:** Run linting checks.
-- **Stage:** Code Check.
+### Code Coverage
+- Measures code coverage using pytest and generates a coverage report.
 
-### `check-ts`
+### Test
+- Executes tests using pytest.
 
-- **Description:** Run TypeScript checks.
-- **Stage:** Code Check.
+### SonarQube Check
+- Runs SonarQube analysis and checks for code quality. Requires code coverage from the "Code Coverage" stage.
 
-### `check-format`
+### Packaging
+- Uses Kaniko to build and package the Docker image.
 
-- **Description:** Check code formatting.
-- **Stage:** Code Checking.
+### Update Kubernetes Manifest
+- Updates the Kubernetes deployment manifest with the new Docker image tag.
 
-### `code-coverage`
+### Deploy
+- Deploys the application using Ansible.
 
-- **Description:** Collect code coverage metrics.
-- **Stage:** Coverage.
-- **Artifacts:**
-  - `${CI_PROJECT_DIR}/backend/coverage/lcov.info`
-  - `${CI_PROJECT_DIR}/frontend/coverage/lcov.info`
-  - `${CI_PROJECT_DIR}/common/coverage/lcov.info`
+## Default CI/CD Settings
 
-### `test`
+- **Runner Tag:** demo-runner
+- **Dockerfile Folder:** Docker/calc
+- **CI Registry Image:** gtkachenko1990
 
-- **Description:** Run unit tests.
-- **Stage:** Test.
+## How to Use
 
-### `sonarqube-check`
+1. Fork/Clone the repository.
 
-- **Description:** Run SonarQube checks.
-- **Stage:** Test.
+2. Configure CI/CD settings in `.gitlab-ci.yml`:
+    - Set your Dockerfile folder in `DOCKER_FILE_FOLDER`.
+    - Adjust the `CI_REGISTRY_IMAGE` according to your GitLab Container Registry.
 
-### `packaging`
+3. Create a pipeline:
+    - Push changes to the repository.
+    - The pipeline will run linting, testing, code coverage, and deployment stages.
 
-- **Description:** Build and package the application.
-- **Stage:** Package.
-- **Artifacts:** `frontend/dist/`.
+## Branch Strategy
 
-### `e2e-test`
-
-- **Description:** Run end-to-end tests.
-- **Stage:** E2E Test.
-- **Artifacts:** `${CI_PROJECT_DIR}/e2e/results.json`.
-
-### `deploy`
-
-- **Description:** Deployment tasks.
-- **Stage:** Deploy.
-
-### `notification`
-
-- **Description:** Send deployment notification.
-- **Stage:** Notification.
-- **Needs:** `deploy` job artifacts.
-
-## Pipeline Rules
-
-- For the `code-coverage` job, always run on the `main` branch and merge request events.
-
-- For the `sonarqube-check` job, run only on the default branch and merge request events.
-
-- For the `packaging` job, run on the `main` branch and any release branches matching the pattern.
-
-- For the `notification` job, run only on the `main` branch and only on successful deployments.
+- The `main` branch triggers deployment on successful packaging and testing.
+- Merge requests trigger pipeline events to ensure code quality and tests.
 
 ## Contributing
 

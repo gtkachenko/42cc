@@ -1,46 +1,71 @@
 stages:
-  - code-check
+  - lint
   - coverage
   - test
   - package
-  - e2e
+  - update-k8s-manifest
   - deploy
-  - notification
 
 default:
-  image: node18
   tags:
     - demo-runner
 
-before_script:
-  - npm ci --no-audit --ignore-scripts
+variables:
+  DOCKER_FILE_FOLDER: "Docker/calc"
+  CI_REGISTRY_IMAGE: "gtkachenko1990"
 
-check-lint:
-  stage: code-check
+lint-dockerfile:
+  stage: lint
+  image: hadolint/hadolint:latest
   allow_failure: false
   script:
-    - npm run lint
+    - hadolint ${CI_PROJECT_DIR}/Docker/Dockerfile
 
-check-ts:
-  stage: code-check
+lint-python:
+  stage: lint
+  image: python:3.11-alpine
+  before_script:
+    - pip install flake8
   script:
-    - npm run check:ts -ws --if-present
-
-check-format:
-  stage: code-checking
+    - flake8 ${CI_PROJECT_DIR}/Docker/calc
   allow_failure: false
+
+lint-ansible:
+  stage: lint
+  image: registry.gitlab.com/pipeline-components/ansible-lint:latest
+  artifacts:
+    when: always
+    reports:
+      junit: ansible-lint.xml
+  before_script:
+    - cd ${CI_PROJECT_DIR}/Ansible
   script:
-    - npm run prettier:ci
+    - ansible-lint -v --show-relpath -f pep8 --nocolor | ansible-lint-junit -o ansible-lint.xml
 
 code-coverage:
   stage: coverage
+  image: python:3.11-alpine
+  before_script:
+    - python -V
+    - python -m pip install --upgrade pip
+    - python -m pip install pipx
+    - python -m pipx install poetry==1.6.1
+    - export PATH=$PATH:$HOME/.local/bin
+    - pip install coverage
+    - cd ${CI_PROJECT_DIR}/Docker/calc
+    - poetry install
   script:
-    - npm run test:coverage -ws --if-present
+    - cd ${CI_PROJECT_DIR}/Docker/calc
+    - poetry run coverage run
+    - poetry run coverage report
+    - poetry run coverage xml
+  coverage: '/TOTAL.*\s+(\d+%)$/'
   artifacts:
-    paths:
-      - ${CI_PROJECT_DIR}/backend/coverage/lcov.info
-      - ${CI_PROJECT_DIR}/frontend/coverage/lcov.info
-      - ${CI_PROJECT_DIR}/common/coverage/lcov.info
+    expire_in: 1 week
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
   rules:
     - if: $CI_COMMIT_BRANCH == 'main'
       when: always
@@ -49,8 +74,12 @@ code-coverage:
 
 test:
   stage: test
+  image: python:3.11-alpine
+  before_script:
+    - pip install pytest
   script:
-    - npm run test
+    - ${CI_PROJECT_DIR}/Docker/calc
+    - pytest
 
 sonarqube-check:
   image:
@@ -65,61 +94,59 @@ sonarqube-check:
     key: "${CI_JOB_NAME}"
     paths:
       - .sonar/cache
+  needs:
+    - job: "code-coverage"
+      artifacts: true
+  before_script:
+    - cp ${CI_PROJECT_DIR}/sonar-project.properties ${CI_PROJECT_DIR}/Docker/calc/sonar-project.properties
   script:
-    - sonar-scanner -Dproject.settings=$PROPERTIES_FILE
-  allow_failure: true
+    - cd ${CI_PROJECT_DIR}/Docker/calc sonar-scanner -Dproject.settings=$PROPERTIES_FILE
+  allow_failure: false
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
 
 packaging:
   stage: package
-  variables:
-    IS_PROD_BUILD: "true"
+  image:
+    name: gcr.io/kaniko-project/executor:v1.9.0-debug
+    entrypoint: [""]
   script:
-    - npm run build
-  artifacts:
-    expire_in: 90d
-    paths:
-      - frontend/dist/
+    - /kaniko/executor
+      --context "${DOCKER_FILE_FOLDER}"
+      --dockerfile "${CI_PROJECT_DIR}/${DOCKER_FILE_FOLDER}/Dockerfile"
+      --destination "${CI_REGISTRY_IMAGE}/test-calc:${CI_COMMIT_BRANCH}-${CI_PIPELINE_ID}"
   rules:
     - if: $CI_COMMIT_BRANCH == 'main'
-    - if: $CI_COMMIT_BRANCH == '/^release.prod.\d+$/'
+      when: always
+    - if: $CI_COMMIT_BRANCH != 'main'
+      when: manual
 
-e2e-test:
-  stage: e2e
+update-k8s-manifest:
+  stage: update-k8s-manifest
+  image: apline
+  before_script:
+    - cd ${CI_PROJECT_DIR}/Kubernetes/deployment
+  needs:
+    - job: "packaging"
   script:
-    - npm run build
-    - npm run start&
-    - npm run e2e
+    - sed -i "s|image: gtkachenko1990/test-calc:[0-9.]*|image: ${CI_REGISTRY_IMAGE}/test-calc:${CI_COMMIT_BRANCH}-${CI_PIPELINE_ID}|g" deployment.yaml
   artifacts:
-    when: always
+    when: on_success
     paths:
-      - ${CI_PROJECT_DIR}/e2e/results.json
+      - ${CI_PROJECT_DIR}/Kubernetes/deployment/deployment.yaml
 
 deploy:
   stage: deploy
+  image: registry.gitlab.com/torese/docker-ansible
+  variables:
+    ANSIBLE_HOST_KEY_CHECKING: 'false'
+    ANSIBLE_FORCE_COLOR: 'true'
+    ANSIBLE_PYTHON_INTERPRRTER: /usr/bin/python3
+  before_script:
+    - ansible --version
+    - cd ${CI_PROJECT_DIR}/Ansible
+    - ansible-galaxy install -p roles/ geerlingguy.pip geerlingguy.k8s_manifests geerlingguy.docker
   script:
-    - npm ci --no-audit --ignore-scripts
-    - npm run ci:diff
-    - npm run ci:deploy
-
-notification:
-  stage: notification
-  script:
-    - npm i -g deployment-notification
-    - send-notification
-  needs:
-    - job: "deploy"
-      artifacts: true
-  rules:
-    - if: $CI_COMMIT_BRANCH == 'main'
-      when: on_success
-
-
-
-
-
-
-
-
+    - ansible-playbook playbook.yml --check
+    - ansible-playbook playbook.yml
